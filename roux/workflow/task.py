@@ -842,6 +842,7 @@ def to_sbatch_script(
     # time,# "01:00:00",
     append_header="",
     expand_pms=False,
+    kernel=None,  ## for .ipynb, else the kernel in the notebook's metadata
     force=False,
     test=False,
     verbose=False,
@@ -868,14 +869,13 @@ def to_sbatch_script(
             com = (
                 f"{script_pre}papermill --parameters_file '{pms_path}' "
                 f"--stdout-file '{Path(log_path).with_suffix('.out')}' --stderr-file '{Path(log_path).with_suffix('.err')}' "
-                # kernel_name=kernel,
-                "--start-timeout=600 "
+                + (f"--kernel '{kernel}' " if kernel else "")
+                + "--start-timeout=600 "
                 "--report-mode "
                 # "--allow_errors=False "
                 f"'{script_path}' '{log_path}'"
                 # f' || {{ echo "{script_path} crashed"; exit 1; }}'
             )
-            # --kernel
             # packages.append('papermill')
             # return "under dev"
             # Using -b or --parameters_base64, users can provide a YAML string, base64-encoded, containing parameter values.
@@ -1196,7 +1196,7 @@ def run_tasks(
     ## common
     force_setup: bool = True,
     no_force_setup: bool = False,
-    cache_dir_path="~/scratch/.roux",  #'/tmp/.roux'
+    cache_dir_path=None,  ## None: $ROUX_CACHE_DIR, else '~/scratch/.roux'
     wd_path=None,
     ## back-compatible
     parameters_list=None,
@@ -1222,6 +1222,15 @@ def run_tasks(
 
     Notes:
         Slurm script is created even if runner=='bash'
+
+        `kernel` is used by every runner (for `bash` and `slurm`, as papermill's `--kernel`); if None, the
+        notebooks run with the kernel in their metadata.
+
+        `cache_dir_path` (logs and run scripts): if None, the environment variable `ROUX_CACHE_DIR`, else
+        '~/scratch/.roux'. Being inherited, the variable also applies to the nested calls (notebooks that call
+        `run_tasks`), e.g. to keep the cache inside the working directory:
+
+            ROUX_CACHE_DIR=.cache/roux python runner.py
 
         Back-compatible: input_notebook_path:script_path
 
@@ -1253,6 +1262,9 @@ def run_tasks(
         force_setup = False
 
     if not test1:
+        if cache_dir_path is None:
+            ## configurable for the nested calls
+            cache_dir_path = os.environ.get("ROUX_CACHE_DIR") or "~/scratch/.roux"
         cache_dir_path = f"{Path(cache_dir_path).expanduser().as_posix()}"
     else:
         cache_dir_path = None
@@ -1454,6 +1466,7 @@ def run_tasks(
                 [s for s in [script_path, sub_com] if s != ""]
             ),  # , ## preffix
             script_pre=script_pre,  # ='', ## e.g. micromamba run -n env
+            kernel=kernel,
             append_header=slurm_header,
             post_arxv=post_arxv,
             post_clean=post_clean,

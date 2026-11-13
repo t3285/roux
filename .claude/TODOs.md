@@ -292,6 +292,27 @@ example log line of a skipped call.
 
 Status: open
 
+### M9. `run_tasks`: the kernel for the bash/slurm runners, a configurable cache dir, running tagged cells
+From the datasets repository (its T17), found while running `notebooks/run.ipynb` stages on a machine without the
+notebooks' kernel:
+- `roux/workflow/task.py:864-878` (`to_sbatch_script`): the papermill command for `.ipynb` has the kernel commented
+  out (`# kernel_name=kernel,`, `# --kernel`), and `run_tasks` (`:1468-1479`, `kws_runner`) does not pass `kernel`.
+  So with the `bash` (and `slurm`) runner, `run_tasks(nb, kernel='python3')` runs the notebook with the kernel in
+  its own metadata (`NoSuchKernel: No such kernel named datasets`). The `py` runner does pass it (`:1414`).
+- `roux/workflow/task.py:1199`: `cache_dir_path="~/scratch/.roux"` is fixed. Run from nested notebooks (where the
+  argument can't be reached), it writes outside the work directory, e.g. in a sandbox limited to it. An
+  environment variable (`ROUX_CACHE_DIR`), inherited by every kernel, makes it configurable without editing notebooks.
+- A helper to run the tagged code cells of a notebook as a plain script (no kernel), e.g. one stage of a runner
+  notebook, with a dry mode that only prints the `run_tasks` params. Modelled on `datasets/notebooks/run_cells.py`.
+
+Plan:
+- [x] Phase 1: `kernel` passed to papermill by `to_sbatch_script` (when given) and from `run_tasks`;
+  `cache_dir_path=None` -> `$ROUX_CACHE_DIR` or `~/scratch/.roux`; docstrings; verify: `driver.py verify` + direct
+  calls: the command in a `run.sh` written by `to_sbatch_script` with/without a kernel, and the resolved cache dir
+  with/without the variable.
+- [ ] Phase 2: `run_cells` in `roux/workflow/task.py` (+ `roux run-cells` CLI); verify: `driver.py verify` + a run
+  on a small tagged notebook in a tmp dir (tags, params, dry mode).
+
 ---
 
 ## Low: correctness details, hygiene, metadata
