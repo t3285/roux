@@ -310,8 +310,10 @@ Plan:
   `cache_dir_path=None` -> `$ROUX_CACHE_DIR` or `~/scratch/.roux`; docstrings; verify: `driver.py verify` + direct
   calls: the command in a `run.sh` written by `to_sbatch_script` with/without a kernel, and the resolved cache dir
   with/without the variable.
-- [ ] Phase 2: `run_cells` in `roux/workflow/task.py` (+ `roux run-cells` CLI); verify: `driver.py verify` + a run
+- [x] Phase 2: `run_cells` in `roux/workflow/task.py` (+ `roux run-cells` CLI); verify: `driver.py verify` + a run
   on a small tagged notebook in a tmp dir (tags, params, dry mode).
+
+Status: done
 
 ---
 

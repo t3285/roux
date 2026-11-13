@@ -1590,3 +1590,130 @@ def run_tasks(
 
     ## uniform output
     return pd.Series(params_jobs).to_frame("params")["params"]  # .apply(pd.Series)
+
+
+## running the cells of a notebook as a script
+def _read_dict_arg(d) -> dict:
+    """A dict from a dict, a JSON string or the path to a JSON/YAML file (e.g. from the CLI)."""
+    if d is None or d == "None":
+        return {}
+    if isinstance(d, dict):
+        return d
+    if Path(d).is_file():
+        return read_dict(d)
+    from roux.workflow.pms import read_cli_pm
+
+    d = read_cli_pm(d)
+    assert isinstance(d, dict), d
+    return d
+
+
+def _dry_run_tasks(*args, **kws):
+    """Stand-in for `run_tasks`: logs the target, the parameters and whether the path-like values exist."""
+    params = kws.pop("params", None) or (args[1] if len(args) > 1 else {})
+    logging.info(f"run_tasks (dry): {args[:1]} {kws}")
+    for k, pms in params.items() if isinstance(params, dict) else enumerate(params):
+        lines = [
+            f"  {kk}: {v}"
+            + (
+                " (exists)"
+                if isinstance(v, str) and "/" in v and Path(v).exists()
+                else ""
+            )
+            for kk, v in pms.items()
+        ]
+        logging.info(f"## {k}\n" + "\n".join(lines))
+
+
+def run_cells(
+    nb_path: str,
+    tags: str = None,
+    params=None,
+    values=None,
+    run_tasks_kws=None,
+    dry: bool = False,
+):
+    """Run code cells of a notebook as a plain Python script (no kernel or papermill), e.g. one stage of a
+    runner notebook that calls `run_tasks`.
+
+    Parameters:
+        nb_path (str): path to the notebook.
+        tags (str|list): run the code cells with any of these tags (comma-separated), in order; None: all.
+        params (dict|str): set after the cell tagged `parameters`, as papermill does (dict, JSON or a JSON/YAML file).
+        values (dict|str): set after the cells tagged `setup` e.g. `{"kernel": "python3", "force": true}`.
+        run_tasks_kws (dict|str): added to every `run_tasks` call, over the call's own e.g. `{"runner": "py"}`.
+        dry (bool): `run_tasks` only logs its parameters and whether the path-like ones exist.
+
+    Notes:
+        Runs from the notebook's folder (the cwd is restored after). Lines starting with `%` or `!` are skipped.
+        The folder of the current Python is put first in `PATH`, so a kernel started as `python` (e.g. `python3`)
+        uses this environment. `MPLBACKEND` defaults to `Agg`.
+        For the cache of the nested `run_tasks` calls, set `ROUX_CACHE_DIR`.
+
+    Usage:
+        roux run-cells notebooks/run.ipynb --tags setup,ids_prio --values '{"kernel": "python3"}' --dry
+    """
+    import json
+    import roux.workflow.task as task_module
+
+    from roux.workflow.pms import read_cli_pm
+
+    params, values, run_tasks_kws = [
+        _read_dict_arg(d) for d in [params, values, run_tasks_kws]
+    ]
+    dry = read_cli_pm(dry) if isinstance(dry, str) else dry
+    if isinstance(tags, str):
+        tags = [t.strip() for t in tags.split(",") if t.strip()]
+
+    ## cells
+    nb_path = Path(nb_path).resolve()
+    cells = [c for c in json.load(open(nb_path))["cells"] if c["cell_type"] == "code"]
+    if tags:
+        cells = [c for c in cells if set(tags) & set(c["metadata"].get("tags", []))]
+        tags_found = {t for c in cells for t in c["metadata"].get("tags", [])}
+        assert set(tags) <= tags_found, f"tags not found: {set(tags) - tags_found}"
+    logging.info(f"{len(cells)} cells of {nb_path.name}")
+
+    ## run_tasks used by the cells
+    run_tasks_ = task_module.run_tasks
+    if dry:
+        run_tasks_cells = _dry_run_tasks
+    elif run_tasks_kws:
+
+        def run_tasks_cells(*args, **kws):
+            return run_tasks_(*args, **{**kws, **run_tasks_kws})
+
+    else:
+        run_tasks_cells = run_tasks_
+    modules = [task_module] + [
+        sys.modules[k] for k in ["roux.global_imports", "roux.run"] if k in sys.modules
+    ]
+
+    os.environ["PATH"] = (
+        os.path.dirname(sys.executable) + os.pathsep + os.environ["PATH"]
+    )
+    os.environ.setdefault("MPLBACKEND", "Agg")
+    cwd_path = os.getcwd()
+    g = {"__name__": "__main__"}
+    try:
+        for m in modules:
+            m.run_tasks = run_tasks_cells
+        os.chdir(nb_path.parent)
+        for i, cell in enumerate(cells):
+            if "run_tasks" in g:
+                g["run_tasks"] = run_tasks_cells
+            source = "\n".join(
+                line
+                for line in "".join(cell["source"]).splitlines()
+                if not line.lstrip().startswith(("%", "!"))
+            )
+            exec(compile(source, f"{nb_path.name}[cell {i}]", "exec"), g)
+            cell_tags = cell["metadata"].get("tags", [])
+            if "parameters" in cell_tags:
+                g.update(params)
+            if "setup" in cell_tags:
+                g.update(values)
+    finally:
+        for m in modules:
+            m.run_tasks = run_tasks_
+        os.chdir(cwd_path)
