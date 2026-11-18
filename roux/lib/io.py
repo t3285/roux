@@ -1911,7 +1911,10 @@ def is_table_empty(
     p,
 ):
     """
-    Check for empty table without opening the file.
+    Check for empty table without reading the table.
+
+    Parquet: the number of rows in its footer (metadata only); the file size varies with the pyarrow version
+    (e.g. an empty table: 1012 bytes with pyarrow 25, so a size cutoff missed it). TSV: the file size.
 
     Tests:
 
@@ -1922,15 +1925,13 @@ def is_table_empty(
             'test/test.pqt'
         )
 
-        Path(p).stat().st_size
+        is_table_empty(p)
     """
-    if (
-        Path(p).suffix in [".tsv"]
-        and Path(p).stat().st_size < 2
-        or Path(p).suffix in [".pqt", ".parquet"]
-        and Path(p).stat().st_size < 977
-    ):
+    if Path(p).suffix in [".pqt", ".parquet"]:
+        import pyarrow.parquet as pq
+
+        return pq.read_metadata(p).num_rows == 0
+    if Path(p).suffix in [".tsv"] and Path(p).stat().st_size < 2:
         return True
-    else:
-        logging.info(Path(p).stat().st_size)
-        return False
+    logging.info(Path(p).stat().st_size)
+    return False

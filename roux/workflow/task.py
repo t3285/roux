@@ -426,9 +426,18 @@ def run_tasks_nb(
         if post and not fast:
             from roux.workflow.nb import to_html, valid_post_task_deps
 
+            def _to_html(p):
+                ## the html is a display of the run (its outputs are the notebooks): a failed render (e.g. quarto or
+                ## its env missing) is a warning, not a failure of the tasks
+                try:
+                    return to_html(p)
+                except Exception as err:
+                    logging.warning(f"post: the html of {p} not rendered: {err!r}")
+                    return None
+
             if valid_post_task_deps:
                 df1["html path"] = df1.rd.apply_async(
-                    lambda x: to_html(
+                    lambda x: _to_html(
                         x["nb path"],
                     ),
                     cpus=cpus,
