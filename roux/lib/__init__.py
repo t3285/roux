@@ -100,8 +100,10 @@ class _PiperPlotter:
             
         # if isinstance(subset,(str)):
         #     subset=[subset]
+        ## `dict` here can be the submodule roux.lib.dict (bound once it is imported): the builtin
+        import builtins
         if sample is not None:
-            if isinstance(sample,dict):
+            if isinstance(sample,builtins.dict):
                 kws_sample=sample
             else:
                 kws_sample={}
@@ -112,7 +114,7 @@ class _PiperPlotter:
                 else:
                     raise ValueError(sample)
                 
-        axs=self._obj.loc[:,subset].hist(**{**dict(label=subset),**kws})
+        axs=self._obj.loc[:,subset].hist(**{'label':subset,**kws})
         ax=axs.ravel()[0]
         ax.set(
             ylabel='Count',
