@@ -274,7 +274,19 @@ def get_stats_dict(stats) -> dict:
     if stats is None:
         return {}
     if isinstance(stats, dict):
-        return stats
+        ## its values made plain too (e.g. a table of tests inside a dict)
+        def to_plain(v):
+            if isinstance(v, (dict, pd.DataFrame)):
+                return get_stats_dict(v)
+            if isinstance(v, pd.Series):
+                return {str(k): to_plain(x) for k, x in v.items()}
+            if isinstance(v, np.ndarray):
+                return v.tolist()
+            if isinstance(v, np.generic):
+                return v.item()
+            return v
+
+        return {k: to_plain(v) for k, v in stats.items()}
     if not isinstance(stats, pd.DataFrame):
         raise TypeError(
             f"ax.stats: a dict or a DataFrame, not a {type(stats).__name__}"
@@ -381,7 +393,11 @@ def _to_panel(
     out.mkdir(parents=True, exist_ok=True)
     if exists and not force:
         ## only the stats remade
-        to_dict(stats, str(out / "stats.yaml"))
+        try:
+            to_dict(stats, str(out / "stats.yaml"))
+        except Exception as e:
+            logging.warning(f"stats not saved ({e}): {input_path}")
+            stats = {}
         return stats
     to_table(data, str(out / "data.pqt"))
     to_dict(kws_plot, str(out / "config.yaml"))
