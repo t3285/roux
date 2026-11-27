@@ -481,6 +481,31 @@ def test_to_review(tmp_path, monkeypatch):
         not (tmp_path / "proj-pub").exists()
         and not (repo / "results/latest.yaml").exists()
     )
+    ## without the review-level stats: only those of each plot
+    (review / "stats.yaml").unlink()
+    (review / "stats_fmt.json").unlink()
+    to_review("to_pub.cfg", review_stats=False)
+    assert not (review / "stats.yaml").exists()
+    assert not (review / "stats_fmt.json").exists()
+    assert read_dict(str(review / "repo/figs/fig1/stats.yaml")) == {"n": 3}
+
+
+def test_to_panel_saved_stats(tmp_path):
+    """The plot's saved stats.yaml: copied (no replot); with force_stats, merged with the replotted ax.stats."""
+    from roux.lib.io import read_dict, to_dict
+    from roux.workflow.pub import _to_panel
+
+    _save_plot(tmp_path / "outputs/v1/c.pdf")
+    to_dict({"m": 1, "n": 2}, str(tmp_path / "outputs/v1/c/stats.yaml"))
+    review = tmp_path / "review/c"
+    assert _to_panel(str(tmp_path / "outputs/v1/c"), str(review)) == {"m": 1, "n": 2}
+    assert read_dict(str(review / "stats.yaml")) == {"m": 1, "n": 2}
+    ## the replotted ax.stats ({"n": 3}) added; the saved ones win
+    (tmp_path / "outputs/v1/c/stats.yaml").write_text("m: 1\n")
+    assert _to_panel(str(tmp_path / "outputs/v1/c"), str(review), force_stats=True) == {
+        "n": 3,
+        "m": 1,
+    }
 
 
 def test_to_review_missing(tmp_path, monkeypatch, caplog):

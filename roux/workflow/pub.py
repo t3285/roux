@@ -254,7 +254,11 @@ def _to_panel(
     input_path: str, review_dir: str, force: bool = False, force_stats: bool = False
 ):
     """
-    The review files of a plot saved by `roux.viz.io.to_plot`: `data.pqt`, `config.yaml`, `plot.py` (cleaned) and `stats.yaml` (the stats of the replotted plot, `get_fig_stats`).
+    The review files of a plot saved by `roux.viz.io.to_plot`: `data.pqt`, `config.yaml`, `plot.py` (cleaned) and `stats.yaml` (flat keys).
+
+    The stats: the plot's own `stats.yaml` (saved by `to_plot`: its given stats and `ax.stats`), copied. The plot is
+    replotted for its `ax.stats` (`get_fig_stats`; the saved stats win on the same keys) only if it has no
+    `stats.yaml` or with `force_stats` (e.g. a plot saved before `to_plot` kept `ax.stats`, or its `plot.py` edited).
 
     Parameters:
         input_path (str): the plot path without suffix i.e. the directory of the saved plot inputs.
@@ -267,6 +271,7 @@ def _to_panel(
     """
     import matplotlib.pyplot as plt
 
+    from roux.lib.dict import flatten_dict
     from roux.lib.io import read_dict, to_dict, to_table
     from roux.viz.io import get_plot_inputs, read_plot
 
@@ -280,14 +285,16 @@ def _to_panel(
     if "path" in data:
         logging.warning(f"skipped, a column `path` in the data: {input_path}")
         return None
-    plt.close("all")
-    ax = read_plot(f"{input_path}/plot.py")
-    try:
-        stats = get_fig_stats(ax)
-    except (TypeError, ValueError) as e:
-        logging.warning(f"stats not saved ({e}): {input_path}")
-        stats = {}
-    plt.close("all")
+    saved_path = Path(f"{input_path}/stats.yaml")
+    stats = (read_dict(str(saved_path)) or {}) if saved_path.exists() else {}
+    if force_stats or not saved_path.exists():
+        plt.close("all")
+        ax = read_plot(f"{input_path}/plot.py")
+        try:
+            stats = {**flatten_dict(get_fig_stats(ax)), **flatten_dict(stats)}
+        except (TypeError, ValueError, AssertionError) as e:
+            logging.warning(f"ax.stats not saved ({e}): {input_path}")
+        plt.close("all")
     out.mkdir(parents=True, exist_ok=True)
     if exists and not force:
         ## only the stats remade
@@ -425,13 +432,14 @@ def to_review(
     check=True,
     force=False,
     force_stats=False,
+    review_stats=True,
 ):
     """
     The review files of `to_pub`, in the analysis repository only (no git checks, no paper repository).
 
     In `review_path`: `figs.tsv`, `figs/fig<id>.pdf` (an error if the plot's pdf is missing) and `figs/fig<id>.png`
-    (if the plot has one; else a warning), `repo/figs/fig<id>/` (data, config, cleaned plot script and stats of each plot), `stats.yaml` (`<fig>:<key>`), `stats_fmt.json` (`{{<fig>:<key>}}`: the formatted numbers)
-    and the source data excel.
+    (if the plot has one; else a warning), `repo/figs/fig<id>/` (data, config, cleaned plot script and stats of each plot), `stats.yaml` (`<fig>:<key>`), `stats_fmt.json` (`{{<fig>:<key>}}`: the formatted numbers;
+    these two only with `review_stats`) and the source data excel.
 
     Usage:
         From the root of the repository.
@@ -453,6 +461,7 @@ def to_review(
         check (bool): raise if a plot is missing; else warn and skip it (`exists` in `figs.tsv`).
         force (bool): remake the outputs that exist.
         force_stats (bool): remake the stats (each plot replotted: `stats.yaml`, and `stats.yaml`/`stats_fmt.json` of the review), the other outputs that exist kept.
+        review_stats (bool): write the review's `stats.yaml` and `stats_fmt.json` (the stats of all the plots, flat); else only those of each plot (`repo/figs/fig<id>/stats.yaml`).
 
     Returns:
         pd.DataFrame: the plan (see `_pub_plan`) of the plots with data.
@@ -468,6 +477,7 @@ def to_review(
             "check",
             "force",
             "force_stats",
+            "review_stats",
         }
         kws = {k: v for k, v in kws.items() if k in keys or k == "output_path"}
         if review_path is None:
@@ -487,6 +497,7 @@ def to_review(
             check=check,
             force=force,
             force_stats=force_stats,
+            review_stats=review_stats,
             **kws,
         )
     assert review_path is not None, "`review_path` is required"
@@ -541,21 +552,22 @@ def to_review(
                 logging.warning(f"png not copied ({e}): {x['plot label']} {src}")
 
     ## stats: {fig: ax.stats} -> `<fig>:<key>`, and formatted
-    from roux.lib.dict import flatten_dict
-    from roux.lib.io import to_dict
-    from roux.lib.str import format_number
+    if review_stats:
+        from roux.lib.dict import flatten_dict
+        from roux.lib.io import to_dict
+        from roux.lib.str import format_number
 
-    stats_flat = flatten_dict(
-        {k: flatten_dict(v, sep=":") for k, v in stats.items() if v}, sep=":"
-    )
-    to_dict(stats_flat, str(review / "stats.yaml"))
-    to_dict(
-        {
-            "{{" + k + "}}": v if isinstance(v, str) else format_number(v)
-            for k, v in stats_flat.items()
-        },
-        str(review / "stats_fmt.json"),
-    )
+        stats_flat = flatten_dict(
+            {k: flatten_dict(v, sep=":") for k, v in stats.items() if v}, sep=":"
+        )
+        to_dict(stats_flat, str(review / "stats.yaml"))
+        to_dict(
+            {
+                "{{" + k + "}}": v if isinstance(v, str) else format_number(v)
+                for k, v in stats_flat.items()
+            },
+            str(review / "stats_fmt.json"),
+        )
 
     ## the plots with data (not skipped)
     from roux.lib.io import read_table, to_excel
