@@ -255,3 +255,111 @@ def diff_dicts(
     for k in d2:
         if k not in d1:  # and k not in ignore:
             print(f"{path} ! : '{k}' not in d1")
+
+
+## the stats of plots (`ax.stats`, `roux.viz.io.to_plot`)
+def _clean_stats_key(s) -> str:
+    """A key of the stats: a label without the counts (`(n)`), the line breaks and the `:` (the separator of the flat keys)."""
+    import re
+
+    s = re.sub(r"\(\s*n?=?\s*[\d,]+\s*\)", "", str(s))
+    return re.sub(r"\s+", " ", s.replace(":", "-")).strip()
+
+
+def get_stats_dict(stats) -> dict:
+    """
+    The stats of a plot (`ax.stats`) as a nested dict.
+
+    Parameters:
+        stats (dict|pd.DataFrame|None): e.g. a dict of a correlation (`roux.viz.scatter`), or a table of tests with a row per comparison (`roux.viz.dist.plot_dists`).
+
+    Returns:
+        dict: a dict as is (empty if None); a table: `{<row id>: {<column>: <value>}}`, the row id from its text columns that vary between the rows (cleaned: `_clean_stats_key`; nested in their order, e.g. `{<label>: {<subset1>: {<subset2>: {...}}}}`), the values from the other columns (numbers; constant text columns kept; NaN dropped).
+
+    Examples:
+        >>> get_stats_dict(pd.DataFrame({'y': ['a\\n(10)', 'b'], 'subset1': 'x', 'subset2': 'z', 'P': [0.1, 0.2]}))
+        {'a': {'subset1': 'x', 'subset2': 'z', 'P': 0.1}, 'b': {'subset1': 'x', 'subset2': 'z', 'P': 0.2}}
+    """
+    import numpy as np
+    import pandas as pd
+
+    if stats is None:
+        return {}
+    if isinstance(stats, dict):
+        ## its values made plain too (e.g. a table of tests inside a dict)
+        def to_plain(v):
+            if isinstance(v, (dict, pd.DataFrame)):
+                return get_stats_dict(v)
+            if isinstance(v, pd.Series):
+                return {str(k): to_plain(x) for k, x in v.items()}
+            if isinstance(v, np.ndarray):
+                return v.tolist()
+            if isinstance(v, np.generic):
+                return v.item()
+            return v
+
+        return {k: to_plain(v) for k, v in stats.items()}
+    if not isinstance(stats, pd.DataFrame):
+        raise TypeError(
+            f"ax.stats: a dict or a DataFrame, not a {type(stats).__name__}"
+        )
+    df = stats.reset_index(drop=True).drop(columns=["index"], errors="ignore")
+    cols_text = [c for c in df.columns if not pd.api.types.is_numeric_dtype(df[c])]
+    ## the row ids: the fewest leading text columns that vary and identify the rows (the later text columns, e.g. a
+    ## test's `change`, are values)
+    cols_id = []
+    for c in [c for c in cols_text if df[c].nunique() > 1]:
+        cols_id.append(c)
+        if not df.duplicated(subset=cols_id).any():
+            break
+
+    def to_value(v):
+        if isinstance(v, (np.integer, np.floating, np.bool_)):
+            v = v.item()
+        return None if isinstance(v, float) and np.isnan(v) else v
+
+    out = {}
+    for _, row in df.iterrows():
+        values = {
+            str(c): to_value(row[c])
+            for c in df.columns
+            if c not in cols_id and to_value(row[c]) is not None
+        }
+        if not cols_id:
+            ## one comparison (or the same ids): the values directly
+            if len(df) > 1:
+                raise ValueError(f"rows not identifiable: {df.columns.tolist()}")
+            return values
+        d = out
+        for c in cols_id[:-1]:
+            d = d.setdefault(_clean_stats_key(row[c]), {})
+        key = _clean_stats_key(row[cols_id[-1]])
+        if key in d:
+            raise ValueError(f"rows not identifiable by {cols_id}: {key}")
+        d[key] = values
+    return out
+
+
+def get_fig_stats(ax) -> dict:
+    """
+    The stats of a plot: `ax.stats` of its axes (`get_stats_dict`); of the given ax only, if it has some; else those of the figure's axes, `{ax<i>: stats}` (the axes in the figure's order) if several have some.
+
+    Parameters:
+        ax (plt.Axes|plt.Figure): the axes returned by the plot, or its figure (then: the figure's axes).
+
+    Returns:
+        dict: the stats (empty if none).
+    """
+    if ax is None:
+        return {}
+    if getattr(ax, "stats", None) is not None:
+        return get_stats_dict(ax.stats)
+    fig = getattr(ax, "figure", None) or ax
+    axs = {
+        f"ax{i}": a.stats
+        for i, a in enumerate(getattr(fig, "axes", []))
+        if getattr(a, "stats", None) is not None
+    }
+    if len(axs) == 1:
+        return get_stats_dict(list(axs.values())[0])
+    return {k: get_stats_dict(v) for k, v in axs.items()}

@@ -512,6 +512,7 @@ def to_plot(
         df1 (pd.DataFrame, optional): dataframe with plotting data. Defaults to None.
         data (pd.DataFrame, optional): dataframe with plotting data. Defaults to None.
         kws_plot (dict, optional): parameters for plotting. Defaults to dict().
+        stats (dict|pd.DataFrame, optional): the stats of the plot, saved in `stats.yaml` (flat keys) together with the plot's own `ax.stats` (`roux.lib.dict.get_fig_stats`; the given ones win on the same keys). None: no `stats.yaml`. Defaults to dict().
         logp (str, optional): path to the log. Defaults to None (`get_logp`: one per kernel).
         sep (str, optional): separator marking the start of the plotting code in jupyter notebook. Defaults to 'begin_plot()'.
         validate (bool, optional): validate the "readability" using `read_plot` function. Defaults to False.
@@ -532,9 +533,26 @@ def to_plot(
             log_notebookp=f'log_notebook.log';open(log_notebookp, 'w').close();get_ipython().run_line_magic('logstart','{log_notebookp} over')
 
     """
-    if stats is not None and isinstance(plotp, plt.Axes):
-        if hasattr(plotp, "stats"):
-            stats = plotp.stats
+    ## the stats saved: the plot's own (`ax.stats` of the axes given, else of the current figure's axes:
+    ## `get_fig_stats`), updated with the given `stats` (flat keys: the given ones win); None: no stats saved
+    if stats is not None:
+        from roux.lib.dict import flatten_dict, get_fig_stats, get_stats_dict
+
+        try:
+            stats_ax = get_fig_stats(
+                plotp
+                if isinstance(plotp, plt.Axes)
+                else (plt.gcf() if plt.get_fignums() else None)
+            )
+        except (TypeError, ValueError) as e:
+            logging.warning(f"ax.stats not saved ({e})")
+            stats_ax = {}
+        try:
+            stats = get_stats_dict(stats)
+        except (TypeError, ValueError) as e:
+            logging.warning(f"stats not made plain ({e})")
+        if stats_ax:
+            stats = {**flatten_dict(stats_ax), **flatten_dict(stats)}
 
     # save plot
     plotp = savefig(
